@@ -1,19 +1,19 @@
 import argparse
 import base64
-from datetime import datetime
 import os
 import shutil
-
-import numpy as np
+import cv2
 import socketio
 import eventlet
 import eventlet.wsgi
+import h5py
+
+import numpy as np
+from datetime import datetime
 from PIL import Image
 from flask import Flask
 from io import BytesIO
-
 from keras.models import load_model
-import h5py
 from keras import __version__ as keras_version
 
 sio = socketio.Server()
@@ -44,38 +44,44 @@ class SimplePIController:
 
 
 controller = SimplePIController(0.1, 0.002)
-set_speed = 9
+set_speed = 1
 controller.set_desired(set_speed)
+
+
+def preprocess(image):
+
+    # Note that the image loaded by the simulator already in RGB space, you don't need to convert it from BGR, WTF...
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+    image_crop = image[40 : -20, :]
+    image_resize = cv2.resize(image_crop, (200, 66), interpolation = cv2.INTER_AREA)
+
+    return image_resize
 
 
 @sio.on('telemetry')
 def telemetry(sid, data):
-    if data:
-        # The current steering angle of the car
-        steering_angle = data["steering_angle"]
-        # The current throttle of the car
-        throttle = data["throttle"]
-        # The current speed of the car
-        speed = data["speed"]
-        # The current image from the center camera of the car
-        imgString = data["image"]
-        image = Image.open(BytesIO(base64.b64decode(imgString)))
-        image_array = np.asarray(image)
-        steering_angle = float(model.predict(image_array[None, :, :, :], batch_size=1))
+    # The current steering angle of the car
+    steering_angle = data["steering_angle"]
+    # The current throttle of the car
+    throttle = data["throttle"]
+    # The current speed of the car
+    speed = data["speed"]
+    # The current image from the center camera of the car
+    imgString = data["image"]
+    image = Image.open(BytesIO(base64.b64decode(imgString)))
+    image_array = np.asarray(image)
 
-        throttle = controller.update(float(speed))
+    # preprocess input image
+    preprocessed = preprocess(image_array)
 
-        print(steering_angle, throttle)
-        send_control(steering_angle, throttle)
+    # This model currently assumes that the features of the model are just the images. Feel free to change this.
+    steering_angle = float(model.predict(preprocessed[None, :, :, :], batch_size = 1))
 
-        # save frame
-        if args.image_folder != '':
-            timestamp = datetime.utcnow().strftime('%Y_%m_%d_%H_%M_%S_%f')[:-3]
-            image_filename = os.path.join(args.image_folder, timestamp)
-            image.save('{}.jpg'.format(image_filename))
-    else:
-        # NOTE: DON'T EDIT THIS.
-        sio.emit('manual', data={}, skip_sid=True)
+    # The driving model currently just outputs a constant throttle. Feel free to edit this.
+    throttle = 0.5
+
+    print(steering_angle, throttle)
+    send_control(steering_angle, throttle)
 
 
 @sio.on('connect')
